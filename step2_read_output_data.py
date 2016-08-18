@@ -631,7 +631,7 @@ def get_data_from_a_file(file_name, data_base):
                     member_count = 0
                     cell_data_group = []
             input_data.tally[tally_count].database.append(cell_data_groups)
-            if not slice_input[2][count]:
+            if not ("cell" in slice_input[2][count]):
                 break
         tally_count += 1
     input_data.organize_tally()
