@@ -82,6 +82,8 @@ class Cell:
         self.mat_id = 0
         self.isotopes = []
         self.scalar_flux = []
+        # show the link between the isotopes and their number in the list of isotopes
+        self.iso_pos = {}
         self.volume = 0.0E+00
 
     # Because the following calculation use the flux data of the cell, so they are set in the Class Cell rather than
@@ -176,6 +178,7 @@ class Inputdata:
                 iso.zaid_id = rr_isoID[0, 0, 0, 0, cell_index, iso_index]
                 if iso.zaid_id == 0:
                     break
+                self.cell_list[cell_index].iso_pos[iso.zaid_id] = iso_index
                 iso.num_density = rr_numDen[0, 0, 0, 0, cell_index, iso_index]
                 iso.rr_abs = rr_abs[0, 0, 0, 0, cell_index, 0:self.energy_bins_number, iso_index]
                 iso.rr_nufiss = rr_nufiss[0, 0, 0, 0, cell_index, 0:self.energy_bins_number, iso_index]
@@ -270,7 +273,41 @@ class Reaction_rate_errors:
         self.total_flux = np.array([])
 
     def get_data_from_inputdata(self, reference, testfile, option="m"):
-        if option == "m":
+        # merge the neighboring fuel region and other neighboring regions which have the same material number
+        if option == "f":
+            # search the fuel region -- reference
+            m_index = 0
+            fuel_area1 = False
+            while m_index < len(reference.material_sp):
+                isotopes = reference.cell_list[reference.material_sp[m_index][0]].iso_pos.keys()
+                fuel_area2 = ((922350 in isotopes) and (922380 in isotopes))
+                if fuel_area1 and fuel_area2:
+                    reference.material_sp[m_index - 1] += reference.material_sp[m_index]
+                    del reference.material_sp[m_index]
+                else:
+                    fuel_area1 = fuel_area2
+                    m_index += 1
+            for index1 in range(len(reference.material_sp)):
+                for index2 in reference.material_sp[index1]:
+                    reference.cell_list[index2].mat_id = index1 + 1
+            # search the fuel region -- testfile
+            m_index = 0
+            fuel_area1 = False
+            while m_index < len(testfile.material_sp):
+                isotopes = testfile.cell_list[testfile.material_sp[m_index][0]].iso_pos.keys()
+                fuel_area2 = ((922350 in isotopes) and (922380 in isotopes))
+                if fuel_area1 and fuel_area2:
+                    testfile.material_sp[m_index - 1] += testfile.material_sp[m_index]
+                    del testfile.material_sp[m_index]
+                else:
+                    fuel_area1 = fuel_area2
+                    m_index += 1
+            for index1 in range(len(testfile.material_sp)):
+                for index2 in testfile.material_sp[index1]:
+                    testfile.cell_list[index2].mat_id = index1 + 1
+
+        # merge the neighboring regions which have the same material number
+        if option == "m" or option == "f":
             # the conditions of the following two "if"s are the check of this kind of reaction rates analysis
             if (len(reference.material_sp) == len(testfile.material_sp)) and (
                         reference.max_isotope_number == reference.max_isotope_number):
@@ -282,6 +319,7 @@ class Reaction_rate_errors:
                     self.energy_bins_number = reference.energy_bins_number
                     self.kinf = reference.calculate_kinf()
                     # many values in different cells whose materials are the same have to be merged
+                    # and to deal the fuel region merging, some modifications have been applied
                     for index in range(self.cell_number):
                         self.cell_list.append(Cell_errors())
                         self.cell_list[index].mat_id = reference.cell_list[reference.material_sp[index][0]].mat_id
@@ -301,14 +339,15 @@ class Reaction_rate_errors:
                         self.cell_list[index].scalar_flux[0] /= self.cell_list[index].volume[0]
                         self.cell_list[index].scalar_flux[1] /= self.cell_list[index].volume[1]
                         # isotopes
-                        self.cell_list[index].isotope_num = len(
-                            reference.cell_list[reference.material_sp[index][0]].isotopes)
+                        all_isotopes = []
+                        for c_i in range(len(reference.material_sp[index])):
+                            cell_no = reference.material_sp[index][c_i]
+                            all_isotopes += reference.cell_list[cell_no].iso_pos.keys()
+                        all_isotopes = list(set(all_isotopes))
+                        self.cell_list[index].isotope_num = len(all_isotopes)
                         for iso_ind in range(self.cell_list[index].isotope_num):
                             self.cell_list[index].isotopes.append(Isotope_errors())
-                            self.cell_list[index].isotopes[iso_ind].zaid_id = \
-                                reference.cell_list[reference.material_sp[index][0]].isotopes[iso_ind].zaid_id
-                            self.cell_list[index].isotopes[iso_ind].num_density = \
-                                reference.cell_list[reference.material_sp[index][0]].isotopes[0].num_density
+                            self.cell_list[index].isotopes[iso_ind].zaid_id = all_isotopes[iso_ind]
                             self.cell_list[index].isotopes[iso_ind].rr_abs = np.zeros((2, self.energy_bins_number))
                             self.cell_list[index].isotopes[iso_ind].rr_scatter = np.zeros((2, self.energy_bins_number))
                             self.cell_list[index].isotopes[iso_ind].rr_nufiss = np.zeros((2, self.energy_bins_number))
@@ -316,21 +355,30 @@ class Reaction_rate_errors:
                                 (2, 3, self.energy_bins_number))
                             for c_i in range(len(reference.material_sp[index])):
                                 cell_no = reference.material_sp[index][c_i]
-                                self.cell_list[index].isotopes[iso_ind].rr_abs[0] += \
-                                    reference.cell_list[cell_no].isotopes[iso_ind].rr_abs * \
-                                    reference.cell_list[cell_no].volume
-                                self.cell_list[index].isotopes[iso_ind].rr_nufiss[0] += \
-                                    reference.cell_list[cell_no].isotopes[iso_ind].rr_nufiss * \
-                                    reference.cell_list[cell_no].volume
-                                self.cell_list[index].isotopes[iso_ind].rr_scatter[0] += \
-                                    reference.cell_list[cell_no].isotopes[iso_ind].rr_scatter * \
-                                    reference.cell_list[cell_no].volume
                                 try:
-                                    self.cell_list[index].isotopes[iso_ind].rr_detailed_scatter[0] += \
-                                        (reference.cell_list[cell_no].isotopes[iso_ind].rr_detailed_scatter *
-                                         reference.cell_list[cell_no].volume)
-                                except ValueError:
-                                    pass
+                                    local_iso = reference.cell_list[cell_no].iso_pos[all_isotopes[iso_ind]]
+                                except KeyError:
+                                    continue
+                                else:
+                                    self.cell_list[index].isotopes[iso_ind].num_density[0] += \
+                                        reference.cell_list[cell_no].isotopes[local_iso].num_density * \
+                                        reference.cell_list[cell_no].volume
+                                    self.cell_list[index].isotopes[iso_ind].rr_abs[0] += \
+                                        reference.cell_list[cell_no].isotopes[local_iso].rr_abs * \
+                                        reference.cell_list[cell_no].volume
+                                    self.cell_list[index].isotopes[iso_ind].rr_nufiss[0] += \
+                                        reference.cell_list[cell_no].isotopes[local_iso].rr_nufiss * \
+                                        reference.cell_list[cell_no].volume
+                                    self.cell_list[index].isotopes[iso_ind].rr_scatter[0] += \
+                                        reference.cell_list[cell_no].isotopes[local_iso].rr_scatter * \
+                                        reference.cell_list[cell_no].volume
+                                    try:
+                                        self.cell_list[index].isotopes[iso_ind].rr_detailed_scatter[0] += \
+                                            (reference.cell_list[cell_no].isotopes[iso_ind].rr_detailed_scatter *
+                                             reference.cell_list[cell_no].volume)
+                                    except ValueError:
+                                        pass
+                            self.cell_list[index].isotopes[iso_ind].num_density[0] /= self.cell_list[index].volume[0]
                             self.cell_list[index].isotopes[iso_ind].rr_abs[0] /= self.cell_list[index].volume[0]
                             self.cell_list[index].isotopes[iso_ind].rr_nufiss[0] /= self.cell_list[index].volume[0]
                             self.cell_list[index].isotopes[iso_ind].rr_scatter[0] /= self.cell_list[index].volume[0]
@@ -338,21 +386,30 @@ class Reaction_rate_errors:
                                 index].volume[0]
                             for c_i in range(len(testfile.material_sp[index])):
                                 cell_no = testfile.material_sp[index][c_i]
-                                self.cell_list[index].isotopes[iso_ind].rr_abs[1] += \
-                                    testfile.cell_list[cell_no].isotopes[iso_ind].rr_abs * \
-                                    testfile.cell_list[cell_no].volume
-                                self.cell_list[index].isotopes[iso_ind].rr_nufiss[1] += \
-                                    testfile.cell_list[cell_no].isotopes[iso_ind].rr_nufiss * \
-                                    testfile.cell_list[cell_no].volume
-                                self.cell_list[index].isotopes[iso_ind].rr_scatter[1] += \
-                                    testfile.cell_list[cell_no].isotopes[iso_ind].rr_scatter * \
-                                    testfile.cell_list[cell_no].volume
                                 try:
-                                    self.cell_list[index].isotopes[iso_ind].rr_detailed_scatter[1] += \
-                                        testfile.cell_list[cell_no].isotopes[iso_ind].rr_detailed_scatter * \
+                                    local_iso = testfile.cell_list[cell_no].iso_pos[all_isotopes[iso_ind]]
+                                except KeyError:
+                                    continue
+                                else:
+                                    self.cell_list[index].isotopes[iso_ind].num_density[1] += \
+                                        testfile.cell_list[cell_no].isotopes[local_iso].num_density * \
                                         testfile.cell_list[cell_no].volume
-                                except ValueError:
-                                    pass
+                                    self.cell_list[index].isotopes[iso_ind].rr_abs[1] += \
+                                        testfile.cell_list[cell_no].isotopes[local_iso].rr_abs * \
+                                        testfile.cell_list[cell_no].volume
+                                    self.cell_list[index].isotopes[iso_ind].rr_nufiss[1] += \
+                                        testfile.cell_list[cell_no].isotopes[local_iso].rr_nufiss * \
+                                        testfile.cell_list[cell_no].volume
+                                    self.cell_list[index].isotopes[iso_ind].rr_scatter[1] += \
+                                        testfile.cell_list[cell_no].isotopes[local_iso].rr_scatter * \
+                                        testfile.cell_list[cell_no].volume
+                                    try:
+                                        self.cell_list[index].isotopes[iso_ind].rr_detailed_scatter[0] += \
+                                            (testfile.cell_list[cell_no].isotopes[iso_ind].rr_detailed_scatter *
+                                             testfile.cell_list[cell_no].volume)
+                                    except ValueError:
+                                        pass
+                            self.cell_list[index].isotopes[iso_ind].num_density[1] /= self.cell_list[index].volume[1]
                             self.cell_list[index].isotopes[iso_ind].rr_abs[1] /= self.cell_list[index].volume[1]
                             self.cell_list[index].isotopes[iso_ind].rr_nufiss[1] /= self.cell_list[index].volume[1]
                             self.cell_list[index].isotopes[iso_ind].rr_scatter[1] /= self.cell_list[index].volume[1]
@@ -643,25 +700,36 @@ class Cell_errors:
         self.mat_id = 0
         self.isotope_num = 0
         self.isotopes = []
+        self.iso_pos = {}
         self.scalar_flux = []
         self.volume = np.array([0.0, 0.0])
 
     def calculate_abs_xs(self):
         for index in range(len(self.isotopes)):
             self.isotopes[index].macro_abs_XS = self.isotopes[index].rr_abs / self.scalar_flux
-            self.isotopes[index].micro_abs_XS = self.isotopes[index].macro_abs_XS / self.isotopes[index].num_density
+            self.isotopes[index].micro_abs_XS = np.zeros(self.isotopes[index].macro_abs_XS.shape)
+            self.isotopes[index].micro_abs_XS[0] = self.isotopes[index].macro_abs_XS[0] / self.isotopes[
+                index].num_density[0]
+            self.isotopes[index].micro_abs_XS[1] = self.isotopes[index].macro_abs_XS[1] / self.isotopes[
+                index].num_density[1]
 
     def calculate_nufiss_v_xs(self):
         for index in range(len(self.isotopes)):
             self.isotopes[index].macro_nufiss_v_XS = self.isotopes[index].rr_nufiss / self.scalar_flux
-            self.isotopes[index].micro_nufiss_v_XS = self.isotopes[index].macro_nufiss_v_XS / self.isotopes[
-                index].num_density
+            self.isotopes[index].micro_nufiss_v_XS = np.zeros(self.isotopes[index].macro_nufiss_v_XS.shape)
+            self.isotopes[index].micro_nufiss_v_XS[0] = self.isotopes[index].macro_nufiss_v_XS[0] / self.isotopes[
+                index].num_density[0]
+            self.isotopes[index].micro_nufiss_v_XS[1] = self.isotopes[index].macro_nufiss_v_XS[1] / self.isotopes[
+                index].num_density[1]
 
     def calculate_scatter_xs(self):
         for index in range(len(self.isotopes)):
             self.isotopes[index].macro_scatter_XS = self.isotopes[index].rr_scatter / self.scalar_flux
-            self.isotopes[index].micro_scatter_XS = self.isotopes[index].macro_scatter_XS / self.isotopes[
-                index].num_density
+            self.isotopes[index].micro_scatter_XS=np.zeros(self.isotopes[index].macro_scatter_XS.shape)
+            self.isotopes[index].micro_scatter_XS[0] = self.isotopes[index].macro_scatter_XS[0] / self.isotopes[
+                index].num_density[0]
+            self.isotopes[index].micro_scatter_XS[1] = self.isotopes[index].macro_scatter_XS[1] / self.isotopes[
+                index].num_density[1]
 
     def calculate_kinf_abs(self, fission, absorption):
         for index in range(len(self.isotopes)):
@@ -690,7 +758,7 @@ class Cell_errors:
 class Isotope_errors:
     def __init__(self):
         self.zaid_id = 0
-        self.num_density = 0.0E+00
+        self.num_density = [0.0E+00, 0.0E+00]
 
         # (2,e_n)
         self.rr_abs = np.array([])
@@ -777,19 +845,18 @@ def check(reference, testfile, option):
                     return False
     else:
         # for other types of analysis
-        return False
+        return True
 
 
 # reference and testfile are two objects of the class "Inputdata"
 # main process
 def reaction_rates_analysis(reference, testfile, option):
-    if option == "m":
-        if check(reference, testfile, option):
-            os.system("mkdir " + New_Path)
-            analysis = Reaction_rate_errors()
-            analysis.get_data_from_inputdata(reference, testfile)
-            analysis.calculate_errors_and_kinfs()
-            analysis.plotting_results()
+    if check(reference, testfile, option):
+        os.system("mkdir " + New_Path)
+        analysis = Reaction_rate_errors()
+        analysis.get_data_from_inputdata(reference, testfile, option)
+        analysis.calculate_errors_and_kinfs()
+        analysis.plotting_results()
 
 
 # main function
